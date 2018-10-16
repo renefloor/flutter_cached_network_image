@@ -34,17 +34,19 @@ class CachedNetworkImage extends StatefulWidget {
     this.placeholder,
     @required this.imageUrl,
     this.errorWidget,
-    this.fadeOutDuration: const Duration(milliseconds: 300),
-    this.fadeOutCurve: Curves.easeOut,
-    this.fadeInDuration: const Duration(milliseconds: 700),
-    this.fadeInCurve: Curves.easeIn,
+    this.fadeOutDuration = const Duration(milliseconds: 300),
+    this.fadeOutCurve = Curves.easeOut,
+    this.fadeInDuration = const Duration(milliseconds: 700),
+    this.fadeInCurve = Curves.easeIn,
     this.width,
     this.height,
     this.fit,
     this.alignment: Alignment.center,
     this.repeat: ImageRepeat.noRepeat,
-    this.matchTextDirection: false,
+    this.matchTextDirection = false,
     this.httpHeaders,
+    this.onlyIfCached = false,
+    this.cachOnlyFallbackWidget,
   })  : assert(imageUrl != null),
         assert(fadeOutDuration != null),
         assert(fadeOutCurve != null),
@@ -53,6 +55,7 @@ class CachedNetworkImage extends StatefulWidget {
         assert(alignment != null),
         assert(repeat != null),
         assert(matchTextDirection != null),
+        assert(onlyIfCached != null),
         super(key: key);
 
   /// Widget displayed while the target [imageUrl] is loading.
@@ -145,6 +148,13 @@ class CachedNetworkImage extends StatefulWidget {
   // Optional headers for the http request of the image url
   final Map<String, String> httpHeaders;
 
+  /// Gets the image only on a cache hit. Skips the download.
+  final bool onlyIfCached;
+
+  /// Widget displayed while [onlyIfCached] is true and the target [imageUrl]
+  /// failed loading.
+  final Widget cachOnlyFallbackWidget;
+
   @override
   State<StatefulWidget> createState() => new _CachedNetworkImageState();
 }
@@ -228,7 +238,8 @@ class _CachedNetworkImageState extends State<CachedNetworkImage>
   void initState() {
     _hasError = false;
     _imageProvider = new CachedNetworkImageProvider(widget.imageUrl,
-        headers: widget.httpHeaders, errorListener: _imageLoadingFailed);
+        headers: widget.httpHeaders, errorListener: _imageLoadingFailed,
+        onlyIfCached: widget.onlyIfCached);
     _imageResolver =
         new _ImageProviderResolver(state: this, listener: _updatePhase);
 
@@ -296,7 +307,7 @@ class _CachedNetworkImageState extends State<CachedNetworkImage>
             _phase = ImagePhase.waiting;
           break;
         case ImagePhase.waiting:
-          if (_hasError && widget.errorWidget == null) {
+          if (_hasError && widget.errorWidget == null && widget.cachOnlyFallbackWidget == null) {
             _phase = ImagePhase.completed;
             return;
           }
@@ -365,7 +376,8 @@ class _CachedNetworkImageState extends State<CachedNetworkImage>
         return true;
       case ImagePhase.fadeIn:
       case ImagePhase.completed:
-        return _hasError && widget.errorWidget == null;
+        return _hasError && ( widget.onlyIfCached ?
+          widget.cachOnlyFallbackWidget == null : widget.errorWidget == null );
     }
 
     return null;
@@ -388,6 +400,10 @@ class _CachedNetworkImageState extends State<CachedNetworkImage>
     assert(_phase != ImagePhase.start);
     if (_isShowingPlaceholder && widget.placeholder != null) {
       return _fadedWidget(widget.placeholder);
+    }
+
+    if (_hasError && widget.onlyIfCached && widget.cachOnlyFallbackWidget != null) {
+      return _fadedWidget(widget.cachOnlyFallbackWidget);
     }
 
     if (_hasError && widget.errorWidget != null) {
@@ -434,7 +450,7 @@ class CachedNetworkImageProvider
   /// Creates an ImageProvider which loads an image from the [url], using the [scale].
   /// When the image fails to load [errorListener] is called.
   const CachedNetworkImageProvider(this.url,
-      {this.scale: 1.0, this.errorListener, this.headers})
+      {this.scale = 1.0, this.errorListener, this.headers, this.onlyIfCached = false})
       : assert(url != null),
         assert(scale != null);
 
@@ -449,6 +465,8 @@ class CachedNetworkImageProvider
 
   // Set headers for the image provider, for example for authentication
   final Map<String, String> headers;
+
+  final bool onlyIfCached;
 
   @override
   Future<CachedNetworkImageProvider> obtainKey(
@@ -469,7 +487,7 @@ class CachedNetworkImageProvider
 
   Future<ui.Codec> _loadAsync(CachedNetworkImageProvider key) async {
     var cacheManager = await CacheManager.getInstance();
-    var file = await cacheManager.getFile(url, headers: headers);
+    var file = await cacheManager.getFile(url, headers: headers, onlyFromCache: onlyIfCached);
     if (file == null) {
       if (errorListener != null) errorListener();
       throw new Exception("Couldn't download or retreive file.");
@@ -488,7 +506,13 @@ class CachedNetworkImageProvider
       throw new Exception("File was empty");
     }
 
-    return await ui.instantiateImageCodec(bytes);
+    Future<ui.Codec> codecF = ui.instantiateImageCodec(bytes)
+      ..catchError((e){
+        if (errorListener != null) errorListener();
+        throw new Exception("File not a valid Image");
+      });
+
+    return codecF;
   }
 
   @override
