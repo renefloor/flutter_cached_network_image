@@ -228,6 +228,7 @@ class CachedNetworkImage extends StatelessWidget {
     this.maxWidthDiskCache,
     this.maxHeightDiskCache,
     ImageRenderMethodForWeb? imageRenderMethodForWeb,
+    double scale = 1.0,
   })  : _image = CachedNetworkImageProvider(
           imageUrl,
           headers: httpHeaders,
@@ -236,6 +237,7 @@ class CachedNetworkImage extends StatelessWidget {
           imageRenderMethodForWeb: imageRenderMethodForWeb,
           maxWidth: maxWidthDiskCache,
           maxHeight: maxHeightDiskCache,
+          scale: scale,
         ),
         super(key: key);
 
